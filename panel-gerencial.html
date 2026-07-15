@@ -85,6 +85,21 @@
 
   .status { margin-top: 14px; font-size: 12px; color: #94a3b8; }
   .status.error { color: #fca5a5; }
+
+  .opciones { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .opcion-btn {
+    text-align: left;
+    background: #0f172a;
+    border: 1px solid #334155;
+    padding: 10px 12px;
+    border-radius: 8px;
+    color: #f1f5f9;
+    font-size: 12px;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .opcion-btn:hover { border-color: #38bdf8; }
+  .opcion-btn strong { display: block; font-size: 13px; margin-bottom: 2px; }
 </style>
 </head>
 <body>
@@ -107,6 +122,8 @@
     <input type="text" id="destino" placeholder="Ej. Zona Industrial, Ciudad">
 
     <button class="principal" id="btnCalcular" onclick="calcularRuta()">Calcular ruta</button>
+
+    <div id="opcionesDestino" class="opciones"></div>
 
     <div id="resultado" class="resultado">
       <div class="fila"><span>Distancia</span><span id="resDistancia">--</span></div>
@@ -167,44 +184,73 @@
   }
 
   // --- Calcular ruta con OpenRouteService ---
+  let camionActual = null;
+
   function calcularRuta() {
     const idx = document.getElementById('camion').value;
     const destinoTexto = document.getElementById('destino').value.trim();
     const btn = document.getElementById('btnCalcular');
+    document.getElementById('opcionesDestino').innerHTML = '';
 
     if (idx === '') { mostrarEstado('error', '⚠️ Selecciona un camión.'); return; }
     if (!destinoTexto) { mostrarEstado('error', '⚠️ Escribe una dirección de destino.'); return; }
 
-    const camion = camionesData[idx];
-    const origenLat = parseFloat(camion.latitud);
-    const origenLng = parseFloat(camion.longitud);
+    camionActual = camionesData[idx];
 
     btn.disabled = true;
     mostrarEstado('', '🔎 Buscando dirección de destino...');
 
-    // Paso 1: geocodificar el destino (dirección de texto -> coordenadas)
-    // Se restringe a Bolivia y se prioriza cercanía al origen para evitar
-    // que el buscador confunda el destino con un lugar de otro país.
-    const urlGeocode = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(destinoTexto)}&size=1&boundary.country=BO&focus.point.lat=${origenLat}&focus.point.lon=${origenLng}`;
+    // Se restringe a Bolivia y se prioriza cercanía al origen. Se piden hasta
+    // 5 candidatos para que el usuario elija el correcto, en vez de asumir
+    // automáticamente el primero (que puede ser una zona muy amplia).
+    const origenLat = parseFloat(camionActual.latitud);
+    const origenLng = parseFloat(camionActual.longitud);
+    const urlGeocode = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(destinoTexto)}&size=5&boundary.country=BO&focus.point.lat=${origenLat}&focus.point.lon=${origenLng}`;
 
     fetch(urlGeocode)
       .then(r => r.json())
       .then(geo => {
+        btn.disabled = false;
         if (!geo.features || !geo.features.length) {
-          throw new Error('No se encontró esa dirección. Intenta ser más específico.');
+          mostrarEstado('error', '⚠️ No se encontró esa dirección. Intenta ser más específico.');
+          return;
         }
-        const [destinoLng, destinoLat] = geo.features[0].geometry.coordinates;
-        const direccionEncontrada = geo.features[0].properties.label || destinoTexto;
-        mostrarEstado('', '🛣️ Destino: "' + direccionEncontrada + '" (' + destinoLat.toFixed(4) + ', ' + destinoLng.toFixed(4) + '). Calculando ruta...');
-        return calcularDistanciaTiempo(origenLat, origenLng, destinoLat, destinoLng, destinoTexto, camion)
-          .catch(err => {
-            throw new Error('Se encontró "' + direccionEncontrada + '" (' + destinoLat.toFixed(4) + ', ' + destinoLng.toFixed(4) + ') pero no se pudo trazar una ruta hacia ahí. Puede que ese punto no tenga carretera cercana registrada en el mapa. Prueba con una dirección de calle más cercana.');
-          });
+        mostrarOpcionesDestino(geo.features, destinoTexto);
       })
+      .catch(() => {
+        btn.disabled = false;
+        mostrarEstado('error', '⚠️ Error al buscar la dirección.');
+      });
+  }
+
+  // --- Mostrar las opciones encontradas como botones para elegir ---
+  function mostrarOpcionesDestino(features, destinoTexto) {
+    mostrarEstado('', '👇 Encontramos ' + features.length + ' resultado(s). Elige el correcto:');
+    const cont = document.getElementById('opcionesDestino');
+    cont.innerHTML = features.map((f, i) => {
+      const label = f.properties.label || destinoTexto;
+      const tipo = f.properties.layer || '';
+      return `<button class="opcion-btn" onclick="elegirDestino(${i})"><strong>${label}</strong>${tipo ? 'Tipo: ' + tipo : ''}</button>`;
+    }).join('');
+    window._candidatosDestino = features;
+    window._destinoTextoOriginal = destinoTexto;
+  }
+
+  // --- Cuando el usuario elige una opción, calcular la ruta con esa ---
+  function elegirDestino(i) {
+    const feature = window._candidatosDestino[i];
+    const [destinoLng, destinoLat] = feature.geometry.coordinates;
+    const direccionEncontrada = feature.properties.label || window._destinoTextoOriginal;
+    const origenLat = parseFloat(camionActual.latitud);
+    const origenLng = parseFloat(camionActual.longitud);
+
+    document.getElementById('opcionesDestino').innerHTML = '';
+    mostrarEstado('', '🛣️ Calculando ruta hacia "' + direccionEncontrada + '"...');
+
+    calcularDistanciaTiempo(origenLat, origenLng, destinoLat, destinoLng, window._destinoTextoOriginal, camionActual)
       .catch(err => {
-        mostrarEstado('error', '⚠️ ' + err.message);
-      })
-      .finally(() => { btn.disabled = false; });
+        mostrarEstado('error', '⚠️ Se encontró "' + direccionEncontrada + '" pero no se pudo trazar una ruta hacia ahí (puede que no tenga carretera cercana registrada). Prueba eligiendo otra opción de la lista, o escribe una dirección distinta.');
+      });
   }
 
   // --- Paso 2: obtener ruta, distancia y tiempo ---
