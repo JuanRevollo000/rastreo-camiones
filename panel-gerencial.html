@@ -185,7 +185,7 @@
     // Paso 1: geocodificar el destino (dirección de texto -> coordenadas)
     // Se restringe a Bolivia y se prioriza cercanía al origen para evitar
     // que el buscador confunda el destino con un lugar de otro país.
-    const urlGeocode = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(destinoTexto)}&size=1&boundary.country=BOL&focus.point.lat=${origenLat}&focus.point.lon=${origenLng}`;
+    const urlGeocode = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(destinoTexto)}&size=1&boundary.country=BO&focus.point.lat=${origenLat}&focus.point.lon=${origenLng}`;
 
     fetch(urlGeocode)
       .then(r => r.json())
@@ -195,8 +195,11 @@
         }
         const [destinoLng, destinoLat] = geo.features[0].geometry.coordinates;
         const direccionEncontrada = geo.features[0].properties.label || destinoTexto;
-        mostrarEstado('', '🛣️ Destino encontrado: "' + direccionEncontrada + '". Calculando ruta...');
-        return calcularDistanciaTiempo(origenLat, origenLng, destinoLat, destinoLng, destinoTexto, camion);
+        mostrarEstado('', '🛣️ Destino: "' + direccionEncontrada + '" (' + destinoLat.toFixed(4) + ', ' + destinoLng.toFixed(4) + '). Calculando ruta...');
+        return calcularDistanciaTiempo(origenLat, origenLng, destinoLat, destinoLng, destinoTexto, camion)
+          .catch(err => {
+            throw new Error('Se encontró "' + direccionEncontrada + '" (' + destinoLat.toFixed(4) + ', ' + destinoLng.toFixed(4) + ') pero no se pudo trazar una ruta hacia ahí. Puede que ese punto no tenga carretera cercana registrada en el mapa. Prueba con una dirección de calle más cercana.');
+          });
       })
       .catch(err => {
         mostrarEstado('error', '⚠️ ' + err.message);
