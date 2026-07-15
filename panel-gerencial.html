@@ -118,10 +118,22 @@
     </select>
     <button class="secundario" onclick="cargarCamiones()">🔄 Refrescar lista de camiones</button>
 
-    <label for="destino">Dirección de destino</label>
+    <label for="destino">Dirección de destino (o elige uno guardado abajo)</label>
     <input type="text" id="destino" placeholder="Ej. Zona Industrial, Ciudad">
 
     <button class="principal" id="btnCalcular" onclick="calcularRuta()">Calcular ruta</button>
+
+    <label for="destinosGuardados">⭐ Destinos frecuentes guardados</label>
+    <select id="destinosGuardados" onchange="usarDestinoGuardado()">
+      <option value="">-- Selecciona uno guardado --</option>
+    </select>
+    <button class="secundario" onclick="eliminarDestinoSeleccionado()">🗑️ Eliminar destino seleccionado</button>
+
+    <label style="margin-top:20px;">➕ Agregar destino nuevo a la lista</label>
+    <input type="text" id="nuevoDestinoNombre" placeholder="Nombre (ej. Bodega Zona Sur)">
+    <input type="text" id="nuevoDestinoLat" placeholder="Latitud (ej. -16.55407)" style="margin-top:8px;">
+    <input type="text" id="nuevoDestinoLng" placeholder="Longitud (ej. -68.17695)" style="margin-top:8px;">
+    <button class="secundario" onclick="agregarDestinoManual()">Agregar a la lista</button>
 
     <div id="opcionesDestino" class="opciones"></div>
 
@@ -130,6 +142,10 @@
       <div class="fila"><span>Tiempo estimado</span><span id="resTiempo">--</span></div>
       <div class="fila"><span>Última ubicación</span><span id="resFecha">--</span></div>
       <button class="secundario" id="btnGuardar" onclick="guardarRuta()">💾 Guardar esta ruta en el Sheet</button>
+
+      <label for="nombreDestinoFrecuente" style="margin-top:14px;">¿Fue el punto correcto? Guárdalo para no buscarlo de nuevo</label>
+      <input type="text" id="nombreDestinoFrecuente" placeholder="Ej. Molino Andino - Planta">
+      <button class="secundario" onclick="guardarDestinoFrecuente()">⭐ Guardar como destino frecuente</button>
     </div>
 
     <div id="status" class="status"></div>
@@ -181,6 +197,98 @@
         select.innerHTML = '<option value="">Error al cargar</option>';
         mostrarEstado('error', '⚠️ No se pudo conectar con el Sheet. Revisa la URL de Apps Script.');
       });
+  }
+
+  // --- Destinos frecuentes: lista editable, guardada en este navegador/dispositivo ---
+  let destinoCalculadoActual = null; // { lat, lng } del último destino usado con éxito
+
+  // Lista inicial pre-cargada. Puedes agregar más aquí mismo en el código,
+  // o usar el formulario "Agregar destino a la lista" dentro de la página.
+  const DESTINOS_INICIALES = [
+    { nombre: "Molino Andino - Planta (El Alto)", lat: -16.55407, lng: -68.17695 }
+  ];
+
+  function cargarDestinosGuardados() {
+    let lista = JSON.parse(localStorage.getItem('destinosFrecuentes') || 'null');
+    if (lista === null) {
+      lista = DESTINOS_INICIALES;
+      localStorage.setItem('destinosFrecuentes', JSON.stringify(lista));
+    }
+    pintarListaDestinos(lista);
+  }
+
+  function pintarListaDestinos(lista) {
+    const select = document.getElementById('destinosGuardados');
+    select.innerHTML = '<option value="">-- Selecciona uno guardado --</option>' +
+      lista.map((d, i) => `<option value="${i}">${d.nombre}</option>`).join('');
+  }
+
+  function usarDestinoGuardado() {
+    const idx = document.getElementById('destinosGuardados').value;
+    if (idx === '') return;
+    const lista = JSON.parse(localStorage.getItem('destinosFrecuentes') || '[]');
+    const d = lista[idx];
+    if (!d) return;
+
+    const idxCamion = document.getElementById('camion').value;
+    if (idxCamion === '') { mostrarEstado('error', '⚠️ Selecciona primero un camión.'); return; }
+    camionActual = camionesData[idxCamion];
+
+    document.getElementById('destino').value = d.nombre;
+    document.getElementById('opcionesDestino').innerHTML = '';
+    mostrarEstado('', '🛣️ Calculando ruta hacia "' + d.nombre + '" (destino guardado)...');
+
+    const origenLat = parseFloat(camionActual.latitud);
+    const origenLng = parseFloat(camionActual.longitud);
+
+    calcularDistanciaTiempo(origenLat, origenLng, d.lat, d.lng, d.nombre, camionActual)
+      .catch(() => {
+        mostrarEstado('error', '⚠️ No se pudo trazar ruta hacia este destino guardado.');
+      });
+  }
+
+  // Guardar el destino que se acaba de calcular exitosamente por búsqueda de texto
+  function guardarDestinoFrecuente() {
+    const nombre = document.getElementById('nombreDestinoFrecuente').value.trim();
+    if (!nombre) { mostrarEstado('error', '⚠️ Escribe un nombre para guardar este destino.'); return; }
+    if (!destinoCalculadoActual) { mostrarEstado('error', '⚠️ Primero calcula una ruta exitosa.'); return; }
+
+    agregarDestinoALista(nombre, destinoCalculadoActual.lat, destinoCalculadoActual.lng);
+    document.getElementById('nombreDestinoFrecuente').value = '';
+    mostrarEstado('', '⭐ "' + nombre + '" guardado en la lista de destinos frecuentes.');
+  }
+
+  // Agregar un destino manualmente con nombre + coordenadas exactas (sin necesidad de buscar)
+  function agregarDestinoManual() {
+    const nombre = document.getElementById('nuevoDestinoNombre').value.trim();
+    const lat = parseFloat(document.getElementById('nuevoDestinoLat').value);
+    const lng = parseFloat(document.getElementById('nuevoDestinoLng').value);
+
+    if (!nombre) { mostrarEstado('error', '⚠️ Escribe un nombre para el destino.'); return; }
+    if (isNaN(lat) || isNaN(lng)) { mostrarEstado('error', '⚠️ Latitud y longitud deben ser números válidos.'); return; }
+
+    agregarDestinoALista(nombre, lat, lng);
+    document.getElementById('nuevoDestinoNombre').value = '';
+    document.getElementById('nuevoDestinoLat').value = '';
+    document.getElementById('nuevoDestinoLng').value = '';
+    mostrarEstado('', '⭐ "' + nombre + '" agregado a la lista de destinos.');
+  }
+
+  function agregarDestinoALista(nombre, lat, lng) {
+    const lista = JSON.parse(localStorage.getItem('destinosFrecuentes') || '[]');
+    lista.push({ nombre, lat, lng });
+    localStorage.setItem('destinosFrecuentes', JSON.stringify(lista));
+    pintarListaDestinos(lista);
+  }
+
+  function eliminarDestinoSeleccionado() {
+    const idx = document.getElementById('destinosGuardados').value;
+    if (idx === '') { mostrarEstado('error', '⚠️ Selecciona un destino de la lista primero.'); return; }
+    const lista = JSON.parse(localStorage.getItem('destinosFrecuentes') || '[]');
+    const eliminado = lista.splice(idx, 1);
+    localStorage.setItem('destinosFrecuentes', JSON.stringify(lista));
+    pintarListaDestinos(lista);
+    mostrarEstado('', '🗑️ "' + (eliminado[0] ? eliminado[0].nombre : '') + '" eliminado de la lista.');
   }
 
   // --- Calcular ruta con OpenRouteService ---
@@ -269,6 +377,7 @@
 
         dibujarMapa(origenLat, origenLng, destinoLat, destinoLng, ruta.geometry);
         mostrarResultado(distanciaKm, tiempoMin, camion.fecha);
+        destinoCalculadoActual = { lat: destinoLat, lng: destinoLng };
 
         ultimoResultado = {
           tipo: 'ruta',
@@ -337,6 +446,7 @@
   // --- Arranque ---
   initMapa();
   cargarCamiones();
+  cargarDestinosGuardados();
 </script>
 
 </body>
