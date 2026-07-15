@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard Gerencial - Flota</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0b1220;
+    color: #f1f5f9;
+    min-height: 100vh;
+  }
+  header {
+    padding: 20px 28px;
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  header h1 { font-size: 20px; }
+  header p { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+  header button {
+    background: #0ea5e9;
+    border: none;
+    color: white;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 13px;
+  }
+
+  .contenido { padding: 24px 28px; }
+
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .kpi {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .kpi .valor { font-size: 28px; font-weight: 700; color: #38bdf8; }
+  .kpi .etiqueta { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+
+  .grid-principal {
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 900px) {
+    .grid-principal { grid-template-columns: 1fr; }
+  }
+
+  .tarjeta {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .tarjeta h2 {
+    font-size: 15px;
+    padding: 16px 18px;
+    border-bottom: 1px solid #334155;
+  }
+  #mapa { height: 420px; width: 100%; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid #263244; }
+  th { color: #94a3b8; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+  .tabla-scroll { max-height: 420px; overflow-y: auto; }
+
+  .vacio { padding: 30px; text-align: center; color: #64748b; font-size: 13px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: #0f2f4a; color: #7dd3fc; }
+  .estado { font-size: 12px; color: #94a3b8; padding: 0 28px 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>📊 Dashboard Gerencial — Flota de Camiones</h1>
+    <p>Vista consolidada de ubicaciones y rutas calculadas</p>
+  </div>
+  <button onclick="cargarTodo()">🔄 Actualizar datos</button>
+</header>
+
+<div class="estado" id="estado"></div>
+
+<div class="contenido">
+
+  <div class="kpis">
+    <div class="kpi"><div class="valor" id="kpiCamiones">--</div><div class="etiqueta">Camiones activos</div></div>
+    <div class="kpi"><div class="valor" id="kpiRutas">--</div><div class="etiqueta">Rutas calculadas (total)</div></div>
+    <div class="kpi"><div class="valor" id="kpiDistancia">--</div><div class="etiqueta">Distancia total recorrida (km)</div></div>
+    <div class="kpi"><div class="valor" id="kpiUltimaAct">--</div><div class="etiqueta">Última actualización recibida</div></div>
+  </div>
+
+  <div class="grid-principal">
+    <div class="tarjeta">
+      <h2>🗺️ Ubicación actual de la flota</h2>
+      <div id="mapa"></div>
+    </div>
+
+    <div class="tarjeta">
+      <h2>🚚 Camiones — última ubicación</h2>
+      <div class="tabla-scroll">
+        <table id="tablaCamiones">
+          <thead><tr><th>Camión</th><th>Conductor</th><th>Última actualización</th></tr></thead>
+          <tbody><tr><td colspan="3" class="vacio">Cargando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="tarjeta" style="margin-top:20px;">
+    <h2>🛣️ Historial de rutas calculadas</h2>
+    <div class="tabla-scroll">
+      <table id="tablaRutas">
+        <thead><tr><th>Fecha</th><th>Camión</th><th>Destino</th><th>Distancia</th><th>Tiempo est.</th></tr></thead>
+        <tbody><tr><td colspan="5" class="vacio">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ⚠️ Pega la misma URL de Apps Script usada en los otros archivos
+  const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbwQOkjpwAL3kq-TYmoR9IEmw7arkCn6KvTlNs51V_n74JvIyhZbx66NcP5ev8N_lBempA/exec";
+
+  let mapa;
+  let marcadores = [];
+
+  function initMapa() {
+    mapa = L.map('mapa').setView([-16.5, -68.15], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(mapa);
+  }
+
+  function cargarTodo() {
+    mostrarEstado('🔄 Actualizando...');
+    Promise.all([cargarUbicaciones(), cargarRutas()])
+      .then(() => mostrarEstado('✅ Datos actualizados: ' + new Date().toLocaleString('es-BO')))
+      .catch(() => mostrarEstado('⚠️ Error al actualizar. Revisa la conexión con el Sheet.'));
+  }
+
+  function cargarUbicaciones() {
+    return fetch(URL_APPS_SCRIPT + '?accion=ultimasUbicaciones')
+      .then(r => r.json())
+      .then(data => {
+        pintarKpiCamiones(data);
+        pintarMapa(data);
+        pintarTablaCamiones(data);
+        pintarUltimaActualizacion(data);
+      });
+  }
+
+  function cargarRutas() {
+    return fetch(URL_APPS_SCRIPT + '?accion=todasRutas')
+      .then(r => r.json())
+      .then(data => {
+        pintarKpiRutas(data);
+        pintarTablaRutas(data);
+      });
+  }
+
+  function pintarKpiCamiones(data) {
+    document.getElementById('kpiCamiones').textContent = data.length;
+  }
+
+  function pintarKpiRutas(data) {
+    document.getElementById('kpiRutas').textContent = data.length;
+    const total = data.reduce((sum, r) => sum + (parseFloat(r.distanciaKm) || 0), 0);
+    document.getElementById('kpiDistancia').textContent = total.toFixed(1);
+  }
+
+  function pintarUltimaActualizacion(data) {
+    if (!data.length) { document.getElementById('kpiUltimaAct').textContent = '--'; return; }
+    const masReciente = data.reduce((a, b) => new Date(a.fecha) > new Date(b.fecha) ? a : b);
+    document.getElementById('kpiUltimaAct').textContent = new Date(masReciente.fecha).toLocaleTimeString('es-BO', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function pintarMapa(data) {
+    marcadores.forEach(m => mapa.removeLayer(m));
+    marcadores = [];
+
+    if (!data.length) return;
+
+    data.forEach(c => {
+      const marcador = L.marker([parseFloat(c.latitud), parseFloat(c.longitud)])
+        .addTo(mapa)
+        .bindPopup(`<strong>${c.camion}</strong><br>${c.conductor}<br>${new Date(c.fecha).toLocaleString('es-BO')}`);
+      marcadores.push(marcador);
+    });
+
+    const grupo = L.featureGroup(marcadores);
+    mapa.fitBounds(grupo.getBounds().pad(0.3));
+  }
+
+  function pintarTablaCamiones(data) {
+    const tbody = document.querySelector('#tablaCamiones tbody');
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="vacio">Sin camiones registrados aún</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+      .map(c => `
+        <tr>
+          <td><span class="badge">${c.camion}</span></td>
+          <td>${c.conductor}</td>
+          <td>${new Date(c.fecha).toLocaleString('es-BO')}</td>
+        </tr>
+      `).join('');
+  }
+
+  function pintarTablaRutas(data) {
+    const tbody = document.querySelector('#tablaRutas tbody');
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="vacio">Aún no se ha guardado ninguna ruta</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(r => `
+      <tr>
+        <td>${new Date(r.fecha).toLocaleString('es-BO')}</td>
+        <td><span class="badge">${r.camion}</span></td>
+        <td>${r.destinoDireccion}</td>
+        <td>${r.distanciaKm} km</td>
+        <td>${r.tiempoMin} min</td>
+      </tr>
+    `).join('');
+  }
+
+  function mostrarEstado(msg) {
+    document.getElementById('estado').textContent = msg;
+  }
+
+  // --- Arranque ---
+  initMapa();
+  cargarTodo();
+</script>
+
+</body>
+</html>
