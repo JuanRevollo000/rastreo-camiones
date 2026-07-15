@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Panel Gerencial - Rutas</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f172a;
+    color: #f1f5f9;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  header {
+    padding: 18px 24px;
+    background: #1e293b;
+    border-bottom: 1px solid #334155;
+  }
+  header h1 { font-size: 18px; }
+  header p { font-size: 12px; color: #94a3b8; margin-top: 2px; }
+
+  .layout {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+  }
+  .panel {
+    width: 340px;
+    padding: 20px;
+    background: #1e293b;
+    border-right: 1px solid #334155;
+  }
+  .mapa-wrap {
+    flex: 1;
+    min-width: 300px;
+    min-height: 420px;
+  }
+  #mapa { width: 100%; height: 100%; min-height: 420px; }
+
+  label { display: block; font-size: 13px; color: #cbd5e1; margin-top: 16px; margin-bottom: 6px; }
+  select, input, button {
+    width: 100%;
+    padding: 11px 12px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f1f5f9;
+    font-size: 14px;
+  }
+  select:focus, input:focus { outline: none; border-color: #38bdf8; }
+
+  button.principal {
+    margin-top: 18px;
+    background: #0ea5e9;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.principal:disabled { background: #475569; cursor: not-allowed; }
+  button.secundario {
+    margin-top: 8px;
+    background: transparent;
+    color: #38bdf8;
+    border: 1px solid #38bdf8;
+    cursor: pointer;
+  }
+
+  .resultado {
+    margin-top: 20px;
+    padding: 14px;
+    border-radius: 10px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    display: none;
+  }
+  .resultado.show { display: block; }
+  .resultado .fila { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; }
+  .resultado .fila span:first-child { color: #94a3b8; }
+  .resultado .fila span:last-child { font-weight: 600; color: #38bdf8; }
+
+  .status { margin-top: 14px; font-size: 12px; color: #94a3b8; }
+  .status.error { color: #fca5a5; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚚 Panel Gerencial — Ruta y Distancia</h1>
+  <p>Selecciona un camión, define el destino y calcula la ruta</p>
+</header>
+
+<div class="layout">
+  <div class="panel">
+
+    <label for="camion">Camión (origen = última ubicación reportada)</label>
+    <select id="camion">
+      <option value="">Cargando camiones...</option>
+    </select>
+    <button class="secundario" onclick="cargarCamiones()">🔄 Refrescar lista de camiones</button>
+
+    <label for="destino">Dirección de destino</label>
+    <input type="text" id="destino" placeholder="Ej. Zona Industrial, Ciudad">
+
+    <button class="principal" id="btnCalcular" onclick="calcularRuta()">Calcular ruta</button>
+
+    <div id="resultado" class="resultado">
+      <div class="fila"><span>Distancia</span><span id="resDistancia">--</span></div>
+      <div class="fila"><span>Tiempo estimado</span><span id="resTiempo">--</span></div>
+      <div class="fila"><span>Última ubicación</span><span id="resFecha">--</span></div>
+      <button class="secundario" id="btnGuardar" onclick="guardarRuta()">💾 Guardar esta ruta en el Sheet</button>
+    </div>
+
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="mapa-wrap">
+    <div id="mapa"></div>
+  </div>
+</div>
+
+<script>
+  // ⚠️ PASO 1: pega la misma URL de Apps Script que usaste en rastreo-camion.html
+  const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbwQOkjpwAL3kq-TYmoR9IEmw7arkCn6KvTlNs51V_n74JvIyhZbx66NcP5ev8N_lBempA/exec";
+
+  // ⚠️ PASO 2: pega tu API key gratuita de https://openrouteservice.org/dev/#/signup
+  const ORS_API_KEY = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6ImMwOWIzOWQ0NDllNDQ0NTZhYjZkMzgzYWY0ZjBmNjZjIiwiaCI6Im11cm11cjY0In0=";
+
+  let mapa, marcadorOrigen, marcadorDestino, lineaRuta;
+  let camionesData = [];
+  let ultimoResultado = null;
+
+  // --- Inicializar mapa ---
+  function initMapa() {
+    mapa = L.map('mapa').setView([14.6349, -90.5069], 8); // vista inicial genérica
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(mapa);
+  }
+
+  // --- Cargar lista de camiones desde el Sheet ---
+  function cargarCamiones() {
+    const select = document.getElementById('camion');
+    select.innerHTML = '<option value="">Cargando...</option>';
+    mostrarEstado('', '');
+
+    fetch(URL_APPS_SCRIPT + '?accion=ultimasUbicaciones')
+      .then(r => r.json())
+      .then(data => {
+        camionesData = data;
+        if (!data.length) {
+          select.innerHTML = '<option value="">Sin camiones registrados aún</option>';
+          return;
+        }
+        select.innerHTML = data.map((c, i) =>
+          `<option value="${i}">${c.camion} — ${c.conductor}</option>`
+        ).join('');
+      })
+      .catch(() => {
+        select.innerHTML = '<option value="">Error al cargar</option>';
+        mostrarEstado('error', '⚠️ No se pudo conectar con el Sheet. Revisa la URL de Apps Script.');
+      });
+  }
+
+  // --- Calcular ruta con OpenRouteService ---
+  function calcularRuta() {
+    const idx = document.getElementById('camion').value;
+    const destinoTexto = document.getElementById('destino').value.trim();
+    const btn = document.getElementById('btnCalcular');
+
+    if (idx === '') { mostrarEstado('error', '⚠️ Selecciona un camión.'); return; }
+    if (!destinoTexto) { mostrarEstado('error', '⚠️ Escribe una dirección de destino.'); return; }
+
+    const camion = camionesData[idx];
+    const origenLat = parseFloat(camion.latitud);
+    const origenLng = parseFloat(camion.longitud);
+
+    btn.disabled = true;
+    mostrarEstado('', '🔎 Buscando dirección de destino...');
+
+    // Paso 1: geocodificar el destino (dirección de texto -> coordenadas)
+    const urlGeocode = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(destinoTexto)}&size=1`;
+
+    fetch(urlGeocode)
+      .then(r => r.json())
+      .then(geo => {
+        if (!geo.features || !geo.features.length) {
+          throw new Error('No se encontró esa dirección. Intenta ser más específico.');
+        }
+        const [destinoLng, destinoLat] = geo.features[0].geometry.coordinates;
+        mostrarEstado('', '🛣️ Calculando ruta...');
+        return calcularDistanciaTiempo(origenLat, origenLng, destinoLat, destinoLng, destinoTexto, camion);
+      })
+      .catch(err => {
+        mostrarEstado('error', '⚠️ ' + err.message);
+      })
+      .finally(() => { btn.disabled = false; });
+  }
+
+  // --- Paso 2: obtener ruta, distancia y tiempo ---
+  function calcularDistanciaTiempo(origenLat, origenLng, destinoLat, destinoLng, destinoTexto, camion) {
+    const urlRuta = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${ORS_API_KEY}&start=${origenLng},${origenLat}&end=${destinoLng},${destinoLat}`;
+
+    return fetch(urlRuta)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.features || !data.features.length) {
+          throw new Error('No se pudo calcular una ruta entre esos dos puntos.');
+        }
+        const ruta = data.features[0];
+        const distanciaKm = (ruta.properties.summary.distance / 1000).toFixed(1);
+        const tiempoMin = Math.round(ruta.properties.summary.duration / 60);
+
+        dibujarMapa(origenLat, origenLng, destinoLat, destinoLng, ruta.geometry);
+        mostrarResultado(distanciaKm, tiempoMin, camion.fecha);
+
+        ultimoResultado = {
+          tipo: 'ruta',
+          fecha: new Date().toISOString(),
+          camion: camion.camion,
+          origenLat, origenLng,
+          destinoDireccion: destinoTexto,
+          destinoLat, destinoLng,
+          distanciaKm, tiempoMin
+        };
+
+        mostrarEstado('', '✅ Ruta calculada correctamente.');
+      });
+  }
+
+  // --- Dibujar en el mapa ---
+  function dibujarMapa(oLat, oLng, dLat, dLng, geometry) {
+    if (marcadorOrigen) mapa.removeLayer(marcadorOrigen);
+    if (marcadorDestino) mapa.removeLayer(marcadorDestino);
+    if (lineaRuta) mapa.removeLayer(lineaRuta);
+
+    marcadorOrigen = L.marker([oLat, oLng]).addTo(mapa).bindPopup('📍 Origen (camión)');
+    marcadorDestino = L.marker([dLat, dLng]).addTo(mapa).bindPopup('🏁 Destino');
+
+    const coords = geometry.coordinates.map(c => [c[1], c[0]]);
+    lineaRuta = L.polyline(coords, { color: '#0ea5e9', weight: 5 }).addTo(mapa);
+
+    mapa.fitBounds(lineaRuta.getBounds(), { padding: [40, 40] });
+  }
+
+  // --- Mostrar resultado en el panel ---
+  function mostrarResultado(distanciaKm, tiempoMin, fecha) {
+    document.getElementById('resultado').classList.add('show');
+    document.getElementById('resDistancia').textContent = distanciaKm + ' km';
+    document.getElementById('resTiempo').textContent = tiempoMin + ' min';
+    document.getElementById('resFecha').textContent = new Date(fecha).toLocaleString('es-GT');
+  }
+
+  // --- Guardar ruta calculada en el Sheet ---
+  function guardarRuta() {
+    if (!ultimoResultado) return;
+    const btn = document.getElementById('btnGuardar');
+    btn.disabled = true;
+    mostrarEstado('', '💾 Guardando...');
+
+    fetch(URL_APPS_SCRIPT, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ultimoResultado)
+    }).then(() => {
+      mostrarEstado('', '✅ Ruta guardada en el Sheet (pestaña Rutas).');
+      btn.disabled = false;
+    }).catch(() => {
+      mostrarEstado('error', '⚠️ No se pudo guardar. Intenta de nuevo.');
+      btn.disabled = false;
+    });
+  }
+
+  function mostrarEstado(tipo, mensaje) {
+    const div = document.getElementById('status');
+    div.className = 'status' + (tipo ? ' ' + tipo : '');
+    div.textContent = mensaje;
+  }
+
+  // --- Arranque ---
+  initMapa();
+  cargarCamiones();
+</script>
+
+</body>
+</html>

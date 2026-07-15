@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rastreo de Camión</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    color: #f1f5f9;
+  }
+  .card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 16px;
+    padding: 28px 24px;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+  }
+  h1 {
+    font-size: 20px;
+    margin-bottom: 4px;
+    color: #f8fafc;
+  }
+  .subtitle {
+    font-size: 13px;
+    color: #94a3b8;
+    margin-bottom: 24px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    color: #cbd5e1;
+    margin-bottom: 6px;
+    margin-top: 16px;
+  }
+  input, select {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    color: #f1f5f9;
+    font-size: 15px;
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: #38bdf8;
+  }
+  button {
+    width: 100%;
+    margin-top: 24px;
+    padding: 15px;
+    border: none;
+    border-radius: 10px;
+    background: #0ea5e9;
+    color: white;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  button:active { background: #0284c7; }
+  button:disabled { background: #475569; cursor: not-allowed; }
+  .status {
+    margin-top: 18px;
+    padding: 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    display: none;
+  }
+  .status.show { display: block; }
+  .status.loading { background: #1e3a5f; border: 1px solid #38bdf8; color: #7dd3fc; }
+  .status.success { background: #14532d; border: 1px solid #22c55e; color: #86efac; }
+  .status.error { background: #4c1d1d; border: 1px solid #ef4444; color: #fca5a5; }
+  .coords {
+    font-family: 'SF Mono', Consolas, monospace;
+    font-size: 12px;
+    color: #94a3b8;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h1>📍 Rastreo de Ubicación</h1>
+  <p class="subtitle">Ingresa tus datos y comparte tu ubicación actual</p>
+
+  <label for="conductor">Nombre del conductor</label>
+  <input type="text" id="conductor" placeholder="Ej. Juan Pérez">
+
+  <label for="camion">Número / placa del camión</label>
+  <input type="text" id="camion" placeholder="Ej. Camión 12 - ABC-123">
+
+  <button id="btnEnviar" onclick="capturarYEnviar()">Actualizar mi ubicación</button>
+
+  <div id="status" class="status"></div>
+</div>
+
+<script>
+  // ⚠️ PASO PENDIENTE: reemplaza esta URL con la que te genere tu Google Apps Script
+  // (instrucciones en el mensaje donde recibiste este archivo)
+  const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbwQOkjpwAL3kq-TYmoR9IEmw7arkCn6KvTlNs51V_n74JvIyhZbx66NcP5ev8N_lBempA/exec";
+
+  function capturarYEnviar() {
+    const conductor = document.getElementById('conductor').value.trim();
+    const camion = document.getElementById('camion').value.trim();
+    const statusDiv = document.getElementById('status');
+    const btn = document.getElementById('btnEnviar');
+
+    if (!conductor || !camion) {
+      mostrarEstado('error', '⚠️ Por favor completa tu nombre y el número de camión.');
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      mostrarEstado('error', '⚠️ Este dispositivo no soporta geolocalización.');
+      return;
+    }
+
+    btn.disabled = true;
+    mostrarEstado('loading', '📡 Obteniendo tu ubicación GPS...');
+
+    navigator.geolocation.getCurrentPosition(
+      function (position) {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        const precision = position.coords.accuracy;
+        enviarDatos(conductor, camion, lat, lng, precision);
+      },
+      function (error) {
+        btn.disabled = false;
+        mostrarEstado('error', '⚠️ No se pudo obtener la ubicación. Verifica que hayas dado permiso de GPS al navegador.');
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  function enviarDatos(conductor, camion, lat, lng, precision) {
+    const statusDiv = document.getElementById('status');
+    const btn = document.getElementById('btnEnviar');
+
+    const datos = {
+      tipo: 'ubicacion',
+      conductor: conductor,
+      camion: camion,
+      latitud: lat,
+      longitud: lng,
+      precision: precision,
+      fecha: new Date().toISOString()
+    };
+
+    fetch(URL_APPS_SCRIPT, {
+      method: 'POST',
+      mode: 'no-cors', // Apps Script Web Apps requieren esto desde el navegador
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(datos)
+    })
+    .then(() => {
+      btn.disabled = false;
+      mostrarEstado('success',
+        '✅ Ubicación enviada correctamente.' +
+        '<div class="coords">Lat: ' + lat.toFixed(6) + ' | Lng: ' + lng.toFixed(6) +
+        '<br>Precisión: ±' + Math.round(precision) + ' m</div>'
+      );
+    })
+    .catch(() => {
+      btn.disabled = false;
+      mostrarEstado('error', '⚠️ Error de conexión al enviar los datos. Intenta de nuevo.');
+    });
+  }
+
+  function mostrarEstado(tipo, mensaje) {
+    const statusDiv = document.getElementById('status');
+    statusDiv.className = 'status show ' + tipo;
+    statusDiv.innerHTML = mensaje;
+  }
+</script>
+
+</body>
+</html>
