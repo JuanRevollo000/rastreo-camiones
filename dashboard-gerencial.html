@@ -83,7 +83,10 @@
   .tabla-scroll { max-height: 420px; overflow-y: auto; }
 
   .vacio { padding: 30px; text-align: center; color: #64748b; font-size: 13px; }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: #0f2f4a; color: #7dd3fc; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; background: #0f2f4a; color: #7dd3fc; cursor: pointer; }
+  .badge:hover { background: #164e63; }
+  tr.fila-clicable { cursor: pointer; }
+  tr.fila-clicable:hover td { background: #1a2740; }
   .estado { font-size: 12px; color: #94a3b8; padding: 0 28px 10px; }
 </style>
 </head>
@@ -125,6 +128,15 @@
     </div>
   </div>
 
+  <div class="tarjeta" id="tarjetaDetalle" style="margin-top:20px; display:none;">
+    <h2>🔍 Detalle del camión seleccionado — <span id="detalleCamionNombre"></span> <button onclick="quitarSeleccion()" style="float:right; background:transparent; border:1px solid #334155; color:#94a3b8; padding:4px 10px; border-radius:6px; cursor:pointer; font-size:11px;">✕ Quitar filtro</button></h2>
+    <div class="kpis" style="padding:16px 18px; margin-bottom:0;">
+      <div class="kpi"><div class="valor" id="detalleRutas">--</div><div class="etiqueta">Rutas calculadas para este camión</div></div>
+      <div class="kpi"><div class="valor" id="detalleDistancia">--</div><div class="etiqueta">Distancia total (km)</div></div>
+      <div class="kpi"><div class="valor" id="detalleTiempo">--</div><div class="etiqueta">Tiempo total estimado (min)</div></div>
+    </div>
+  </div>
+
   <div class="tarjeta" style="margin-top:20px;">
     <h2>🛣️ Historial de rutas calculadas</h2>
     <div class="tabla-scroll">
@@ -142,7 +154,10 @@
   const URL_APPS_SCRIPT = "https://script.google.com/macros/s/AKfycbwQOkjpwAL3kq-TYmoR9IEmw7arkCn6KvTlNs51V_n74JvIyhZbx66NcP5ev8N_lBempA/exec";
 
   let mapa;
-  let marcadores = [];
+  let marcadores = {}; // { nombreCamion: marcadorLeaflet }
+  let datosCamiones = [];
+  let datosRutas = [];
+  let camionSeleccionado = null;
 
   function initMapa() {
     mapa = L.map('mapa').setView([-16.5, -68.15], 12);
@@ -162,6 +177,7 @@
     return fetch(URL_APPS_SCRIPT + '?accion=ultimasUbicaciones')
       .then(r => r.json())
       .then(data => {
+        datosCamiones = data;
         pintarKpiCamiones(data);
         pintarMapa(data);
         pintarTablaCamiones(data);
@@ -173,8 +189,9 @@
     return fetch(URL_APPS_SCRIPT + '?accion=todasRutas')
       .then(r => r.json())
       .then(data => {
+        datosRutas = data;
         pintarKpiRutas(data);
-        pintarTablaRutas(data);
+        pintarTablaRutas(camionSeleccionado ? data.filter(r => r.camion === camionSeleccionado) : data);
       });
   }
 
@@ -195,8 +212,8 @@
   }
 
   function pintarMapa(data) {
-    marcadores.forEach(m => mapa.removeLayer(m));
-    marcadores = [];
+    Object.values(marcadores).forEach(m => mapa.removeLayer(m));
+    marcadores = {};
 
     if (!data.length) return;
 
@@ -204,10 +221,10 @@
       const marcador = L.marker([parseFloat(c.latitud), parseFloat(c.longitud)])
         .addTo(mapa)
         .bindPopup(`<strong>${c.camion}</strong><br>${c.conductor}<br>${new Date(c.fecha).toLocaleString('es-BO')}`);
-      marcadores.push(marcador);
+      marcadores[c.camion] = marcador;
     });
 
-    const grupo = L.featureGroup(marcadores);
+    const grupo = L.featureGroup(Object.values(marcadores));
     mapa.fitBounds(grupo.getBounds().pad(0.3));
   }
 
@@ -220,7 +237,7 @@
     tbody.innerHTML = data
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
       .map(c => `
-        <tr>
+        <tr class="fila-clicable" onclick="seleccionarCamion('${c.camion}')">
           <td><span class="badge">${c.camion}</span></td>
           <td>${c.conductor}</td>
           <td>${new Date(c.fecha).toLocaleString('es-BO')}</td>
@@ -237,7 +254,7 @@
     tbody.innerHTML = data.map(r => `
       <tr>
         <td>${new Date(r.fecha).toLocaleString('es-BO')}</td>
-        <td><span class="badge">${r.camion}</span></td>
+        <td><span class="badge" onclick="seleccionarCamion('${r.camion}')">${r.camion}</span></td>
         <td>${r.destinoDireccion}</td>
         <td>${r.distanciaKm} km</td>
         <td>${r.tiempoMin} min</td>
@@ -247,6 +264,39 @@
 
   function mostrarEstado(msg) {
     document.getElementById('estado').textContent = msg;
+  }
+
+  // --- Selección de un camión específico ---
+  function seleccionarCamion(nombreCamion) {
+    camionSeleccionado = nombreCamion;
+
+    // Centrar y abrir popup en el mapa
+    const marcador = marcadores[nombreCamion];
+    if (marcador) {
+      mapa.setView(marcador.getLatLng(), 15);
+      marcador.openPopup();
+    }
+
+    // Filtrar tabla de rutas solo para este camión
+    const rutasDelCamion = datosRutas.filter(r => r.camion === nombreCamion);
+    pintarTablaRutas(rutasDelCamion);
+
+    // Mostrar tarjeta de detalle con totales de este camión
+    document.getElementById('tarjetaDetalle').style.display = 'block';
+    document.getElementById('detalleCamionNombre').textContent = nombreCamion;
+    document.getElementById('detalleRutas').textContent = rutasDelCamion.length;
+    const distanciaTotal = rutasDelCamion.reduce((s, r) => s + (parseFloat(r.distanciaKm) || 0), 0);
+    const tiempoTotal = rutasDelCamion.reduce((s, r) => s + (parseFloat(r.tiempoMin) || 0), 0);
+    document.getElementById('detalleDistancia').textContent = distanciaTotal.toFixed(1);
+    document.getElementById('detalleTiempo').textContent = tiempoTotal.toFixed(0);
+
+    document.getElementById('tarjetaDetalle').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function quitarSeleccion() {
+    camionSeleccionado = null;
+    document.getElementById('tarjetaDetalle').style.display = 'none';
+    pintarTablaRutas(datosRutas);
   }
 
   // --- Arranque ---
